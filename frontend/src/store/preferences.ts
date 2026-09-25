@@ -60,8 +60,10 @@ function normalizeArticlePageSize(size: number): ArticlePageSize {
 export interface PreferencesState {
   locale: AppLocale;
   articlePageSize: ArticlePageSize;
+  hideFeedsWithoutUnread: boolean;
   setLocale: (locale: string) => void;
   setArticlePageSize: (size: number) => void;
+  setHideFeedsWithoutUnread: (hide: boolean) => void;
 }
 
 export const usePreferencesStore = create<PreferencesState>()(
@@ -69,9 +71,12 @@ export const usePreferencesStore = create<PreferencesState>()(
     (set) => ({
       locale: defaultLocale,
       articlePageSize: defaultArticlePageSize,
+      hideFeedsWithoutUnread: false,
       setLocale: (locale) => set({ locale: normalizeLocale(locale) }),
       setArticlePageSize: (size) =>
         set({ articlePageSize: normalizeArticlePageSize(size) }),
+      setHideFeedsWithoutUnread: (hide) =>
+        set({ hideFeedsWithoutUnread: Boolean(hide) }),
     }),
     {
       name: "fusion-preferences",
@@ -79,6 +84,7 @@ export const usePreferencesStore = create<PreferencesState>()(
       partialize: (state) => ({
         locale: state.locale,
         articlePageSize: state.articlePageSize,
+        hideFeedsWithoutUnread: state.hideFeedsWithoutUnread,
       }),
       merge: (persistedState, currentState) => {
         const persisted = persistedState as Partial<PreferencesState> | undefined;
@@ -89,6 +95,8 @@ export const usePreferencesStore = create<PreferencesState>()(
           articlePageSize: normalizeArticlePageSize(
             persisted?.articlePageSize ?? currentState.articlePageSize,
           ),
+          hideFeedsWithoutUnread:
+            persisted?.hideFeedsWithoutUnread === true,
         };
       },
     },

@@ -86,6 +86,7 @@ export const zhMessages: PartialMessages = {
   "login.signIn": "登录",
   "login.signingIn": "登录中...",
   "sidebar.manageFeeds": "管理订阅",
+  "sidebar.onlyUnreadFeeds": "仅显示有未读文章的订阅",
   "sidebar.search": "搜索",
   "sidebar.settings": "设置",
   "group.add.description": "创建新分组以整理你的订阅。",

@@ -1,6 +1,11 @@
 import { useMemo } from "react";
 import { useLocation } from "@tanstack/react-router";
-import { Inbox, Layers, Star } from "lucide-react";
+import { Inbox, Layers, ListFilter, Star } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { isArticleFilter, type ArticleFilter } from "@/lib/article-filter";
 import { useGroups } from "@/queries/groups";
@@ -10,7 +15,13 @@ import { useUrlState } from "@/hooks/use-url-state";
 import { useSidebarNavigation } from "@/hooks/use-keyboard";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import { sidebarNodeKey, useSidebarNavStore, type SidebarNode } from "@/store";
+import {
+  sidebarNodeKey,
+  usePreferencesStore,
+  useSidebarNavStore,
+  type SidebarNode,
+} from "@/store";
+import type { Feed } from "@/lib/api";
 import { FeedGroup } from "./feed-group";
 import { FeedItem } from "./feed-item";
 
@@ -19,7 +30,7 @@ const sidebarFilterValues: ArticleFilter[] = ["unread", "starred", "all"];
 export function FeedList() {
   const { t } = useI18n();
   const { data: groups = [], isLoading } = useGroups();
-  const { feeds, getFeedsByGroup } = useFeedLookup();
+  const { feeds } = useFeedLookup();
   const { getTotalUnreadCount } = useUnreadCounts();
   const { total: starredTotal } = useBookmarkLookup();
   const {
@@ -32,6 +43,35 @@ export function FeedList() {
   const collapsedGroupIds = useSidebarNavStore((s) => s.collapsedGroupIds);
   const focusedKey = useSidebarNavStore((s) => s.focusedKey);
   const setFocusedKey = useSidebarNavStore((s) => s.setFocusedKey);
+  const hideFeedsWithoutUnread = usePreferencesStore(
+    (s) => s.hideFeedsWithoutUnread,
+  );
+  const setHideFeedsWithoutUnread = usePreferencesStore(
+    (s) => s.setHideFeedsWithoutUnread,
+  );
+  const visibleFeeds = useMemo(
+    () =>
+      hideFeedsWithoutUnread
+        ? feeds.filter((feed) => (feed.unread_count ?? 0) > 0)
+        : feeds,
+    [feeds, hideFeedsWithoutUnread],
+  );
+  const visibleFeedsByGroup = useMemo(() => {
+    const map = new Map<number, Feed[]>();
+    for (const feed of visibleFeeds) {
+      const groupFeeds = map.get(feed.group_id);
+      if (groupFeeds) {
+        groupFeeds.push(feed);
+      } else {
+        map.set(feed.group_id, [feed]);
+      }
+    }
+    return map;
+  }, [visibleFeeds]);
+  const ungroupedFeeds = useMemo(
+    () => visibleFeeds.filter((feed) => feed.group_id === 0),
+    [visibleFeeds],
+  );
   const firstPathSegment = pathname.split("/").filter(Boolean)[0];
   const isOnHomePage =
     typeof firstPathSegment === "string" && isArticleFilter(firstPathSegment);
@@ -75,6 +115,11 @@ export function FeedList() {
     }));
 
     for (const group of groups) {
+      const groupFeeds = visibleFeedsByGroup.get(group.id) ?? [];
+      if (hideFeedsWithoutUnread && groupFeeds.length === 0) {
+        continue;
+      }
+
       list.push({
         key: sidebarNodeKey.group(group.id),
         kind: "group",
@@ -82,7 +127,7 @@ export function FeedList() {
       });
 
       if (!collapsedGroupIds.includes(group.id)) {
-        for (const feed of getFeedsByGroup(group.id)) {
+        for (const feed of groupFeeds) {
           list.push({
             key: sidebarNodeKey.feed(feed.id),
             kind: "feed",
@@ -93,7 +138,7 @@ export function FeedList() {
       }
     }
 
-    for (const feed of feeds.filter((f) => f.group_id === 0)) {
+    for (const feed of ungroupedFeeds) {
       list.push({
         key: sidebarNodeKey.feed(feed.id),
         kind: "feed",
@@ -103,7 +148,13 @@ export function FeedList() {
     }
 
     return list;
-  }, [collapsedGroupIds, feeds, getFeedsByGroup, groups]);
+  }, [
+    collapsedGroupIds,
+    groups,
+    hideFeedsWithoutUnread,
+    ungroupedFeeds,
+    visibleFeedsByGroup,
+  ]);
 
   useSidebarNavigation(nodes);
 
@@ -158,12 +209,40 @@ export function FeedList() {
           <span className="text-[11px] font-medium text-muted-foreground">
             {t("search.group.feeds")}
           </span>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={t("sidebar.onlyUnreadFeeds")}
+                  aria-pressed={hideFeedsWithoutUnread}
+                  onClick={() =>
+                    setHideFeedsWithoutUnread(!hideFeedsWithoutUnread)
+                  }
+                  className={cn(
+                    "rounded-md p-0.5 transition-colors hover:bg-accent/50",
+                    hideFeedsWithoutUnread
+                      ? "text-primary"
+                      : "text-muted-foreground",
+                  )}
+                />
+              }
+            >
+              <ListFilter className="h-3.5 w-3.5" />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {t("sidebar.onlyUnreadFeeds")}
+            </TooltipContent>
+          </Tooltip>
         </div>
 
         {/* Feed groups */}
         <div className="w-full min-w-0 space-y-0.5">
           {groups.map((group) => {
-            const groupFeeds = getFeedsByGroup(group.id);
+            const groupFeeds = visibleFeedsByGroup.get(group.id) ?? [];
+            if (hideFeedsWithoutUnread && groupFeeds.length === 0) {
+              return null;
+            }
 
             return (
               <FeedGroup
@@ -176,11 +255,9 @@ export function FeedList() {
           })}
 
           {/* Ungrouped feeds (group_id = 0) */}
-          {feeds
-            .filter((f) => f.group_id === 0)
-            .map((feed) => (
-              <FeedItem key={feed.id} feed={feed} />
-            ))}
+          {ungroupedFeeds.map((feed) => (
+            <FeedItem key={feed.id} feed={feed} />
+          ))}
         </div>
       </div>
     </ScrollArea>

@@ -86,6 +86,7 @@ export const ruMessages: PartialMessages = {
   "login.signIn": "Войти",
   "login.signingIn": "Вход...",
   "sidebar.manageFeeds": "Управление лентами",
+  "sidebar.onlyUnreadFeeds": "Показывать только ленты с непрочитанными статьями",
   "sidebar.search": "Поиск",
   "sidebar.settings": "Настройки",
   "group.add.description": "Создайте группу для организации ваших лент.",

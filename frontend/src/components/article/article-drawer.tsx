@@ -7,6 +7,7 @@ import {
   Star,
   X,
 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -78,6 +79,27 @@ export function ArticleDrawer() {
   const bookmark = article ? getBookmarkByItemId(article.id) : null;
   const starred = article ? isItemStarred(article.id) : false;
   const safeArticleLink = article ? toSafeExternalUrl(article.link) : null;
+
+  const markReadMutate = markRead.mutate;
+  const autoReadArticleIdRef = useRef<number | null>(null);
+
+  // Opening a preview marks the article as read. Tracking the last auto-read id
+  // (instead of reacting to `article.unread`) lets "m" flip it back to unread
+  // without this effect immediately marking it read again.
+  useEffect(() => {
+    if (selectedArticleId === null) {
+      autoReadArticleIdRef.current = null;
+      return;
+    }
+    if (autoReadArticleIdRef.current === selectedArticleId) {
+      return;
+    }
+    if (!article || !canToggleRead || !article.unread) {
+      return;
+    }
+    autoReadArticleIdRef.current = selectedArticleId;
+    markReadMutate([article.id]);
+  }, [article, canToggleRead, markReadMutate, selectedArticleId]);
 
   const handleOpenChange = (open: boolean) => {
     if (!open) {
@@ -222,7 +244,7 @@ export function ArticleDrawer() {
             </div>
 
             {/* Content */}
-            <ScrollArea className="min-h-0 flex-1">
+            <ScrollArea key={article.id} className="min-h-0 flex-1">
               <article className="min-w-0 px-5 py-6 sm:px-12 sm:py-8">
                 <div className="space-y-3">
                   <h1 className="text-[28px] font-bold leading-[1.3]">

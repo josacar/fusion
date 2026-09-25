@@ -86,6 +86,7 @@ export const svMessages: PartialMessages = {
   "login.signIn": "Logga in",
   "login.signingIn": "Loggar in...",
   "sidebar.manageFeeds": "Hantera floden",
+  "sidebar.onlyUnreadFeeds": "Visa endast flöden med olästa artiklar",
   "sidebar.search": "Sok",
   "sidebar.settings": "Installningar",
   "group.add.description": "Skapa en ny grupp for att organisera dina floden.",

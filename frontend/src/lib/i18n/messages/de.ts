@@ -86,6 +86,7 @@ export const deMessages: PartialMessages = {
   "login.signIn": "Anmelden",
   "login.signingIn": "Wird angemeldet...",
   "sidebar.manageFeeds": "Feeds verwalten",
+  "sidebar.onlyUnreadFeeds": "Nur Feeds mit ungelesenen Artikeln anzeigen",
   "sidebar.search": "Suchen",
   "sidebar.settings": "Einstellungen",
   "group.add.description": "Neue Gruppe erstellen, um Feeds zu organisieren.",

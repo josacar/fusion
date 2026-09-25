@@ -84,6 +84,7 @@ export const enMessages = {
   "login.signIn": "Sign in",
   "login.signingIn": "Signing in...",
   "sidebar.manageFeeds": "Manage Feeds",
+  "sidebar.onlyUnreadFeeds": "Only show feeds with unread articles",
   "sidebar.search": "Search",
   "sidebar.settings": "Settings",
   "group.add.description": "Create a new group to organize your feeds.",

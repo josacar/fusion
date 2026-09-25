@@ -86,6 +86,7 @@ export const ptMessages: PartialMessages = {
   "login.signIn": "Entrar",
   "login.signingIn": "Entrando...",
   "sidebar.manageFeeds": "Gerenciar feeds",
+  "sidebar.onlyUnreadFeeds": "Mostrar apenas feeds com artigos não lidos",
   "sidebar.search": "Pesquisar",
   "sidebar.settings": "Configuracoes",
   "group.add.description": "Crie um novo grupo para organizar seus feeds.",

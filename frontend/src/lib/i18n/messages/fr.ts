@@ -86,6 +86,7 @@ export const frMessages: PartialMessages = {
   "login.signIn": "Se connecter",
   "login.signingIn": "Connexion...",
   "sidebar.manageFeeds": "Gérer les flux",
+  "sidebar.onlyUnreadFeeds": "Afficher uniquement les flux avec des articles non lus",
   "sidebar.search": "Rechercher",
   "sidebar.settings": "Paramètres",
   "group.add.description": "Créez un nouveau groupe pour organiser vos flux.",
