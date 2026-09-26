@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useLocation } from "@tanstack/react-router";
 import { Inbox, Layers, ListFilter, Star } from "lucide-react";
 import {
@@ -49,13 +49,21 @@ export function FeedList() {
   const setHideFeedsWithoutUnread = usePreferencesStore(
     (s) => s.setHideFeedsWithoutUnread,
   );
-  const visibleFeeds = useMemo(
-    () =>
-      hideFeedsWithoutUnread
-        ? feeds.filter((feed) => (feed.unread_count ?? 0) > 0)
-        : feeds,
-    [feeds, hideFeedsWithoutUnread],
-  );
+  // In "only unread" mode the active feed/group is kept visible even after its
+  // last article is read, otherwise it disappears mid-read and keyboard
+  // navigation loses its anchor (Shift+J could no longer reach the next item).
+  const visibleFeeds = useMemo(() => {
+    if (!hideFeedsWithoutUnread) {
+      return feeds;
+    }
+
+    return feeds.filter(
+      (feed) =>
+        (feed.unread_count ?? 0) > 0 ||
+        feed.id === selectedFeedId ||
+        sidebarNodeKey.feed(feed.id) === focusedKey,
+    );
+  }, [feeds, focusedKey, hideFeedsWithoutUnread, selectedFeedId]);
   const visibleFeedsByGroup = useMemo(() => {
     const map = new Map<number, Feed[]>();
     for (const feed of visibleFeeds) {
@@ -71,6 +79,14 @@ export function FeedList() {
   const ungroupedFeeds = useMemo(
     () => visibleFeeds.filter((feed) => feed.group_id === 0),
     [visibleFeeds],
+  );
+  const shouldShowGroup = useCallback(
+    (groupId: number, groupFeeds: Feed[]) =>
+      !hideFeedsWithoutUnread ||
+      groupFeeds.length > 0 ||
+      groupId === selectedGroupId ||
+      sidebarNodeKey.group(groupId) === focusedKey,
+    [focusedKey, hideFeedsWithoutUnread, selectedGroupId],
   );
   const firstPathSegment = pathname.split("/").filter(Boolean)[0];
   const isOnHomePage =
@@ -116,7 +132,7 @@ export function FeedList() {
 
     for (const group of groups) {
       const groupFeeds = visibleFeedsByGroup.get(group.id) ?? [];
-      if (hideFeedsWithoutUnread && groupFeeds.length === 0) {
+      if (!shouldShowGroup(group.id, groupFeeds)) {
         continue;
       }
 
@@ -151,7 +167,7 @@ export function FeedList() {
   }, [
     collapsedGroupIds,
     groups,
-    hideFeedsWithoutUnread,
+    shouldShowGroup,
     ungroupedFeeds,
     visibleFeedsByGroup,
   ]);
@@ -240,7 +256,7 @@ export function FeedList() {
         <div className="w-full min-w-0 space-y-0.5">
           {groups.map((group) => {
             const groupFeeds = visibleFeedsByGroup.get(group.id) ?? [];
-            if (hideFeedsWithoutUnread && groupFeeds.length === 0) {
+            if (!shouldShowGroup(group.id, groupFeeds)) {
               return null;
             }
 
