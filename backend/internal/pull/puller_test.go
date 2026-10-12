@@ -42,7 +42,7 @@ func TestRefreshFeedPreservesValidatorsWhen304OmitHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := st.CreateFeed(1, "Feed A", server.URL, "", "")
+	feed, err := st.CreateFeed(1, "Feed A", server.URL, "", "", nil)
 	if err != nil {
 		t.Fatalf("create feed: %v", err)
 	}
@@ -108,10 +108,10 @@ func TestRefreshAllWaitsForRunningJobs(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if _, err := st.CreateFeed(1, "Feed A", server.URL+"/a", "", ""); err != nil {
+	if _, err := st.CreateFeed(1, "Feed A", server.URL+"/a", "", "", nil); err != nil {
 		t.Fatalf("create feed A: %v", err)
 	}
-	if _, err := st.CreateFeed(1, "Feed B", server.URL+"/b", "", ""); err != nil {
+	if _, err := st.CreateFeed(1, "Feed B", server.URL+"/b", "", "", nil); err != nil {
 		t.Fatalf("create feed B: %v", err)
 	}
 
@@ -142,5 +142,98 @@ func TestRefreshAllWaitsForRunningJobs(t *testing.T) {
 		if feed.FetchState.LastSuccessAt <= 0 {
 			t.Fatalf("feed %d last_success_at = %d, want > 0", feed.ID, feed.FetchState.LastSuccessAt)
 		}
+	}
+}
+
+func TestRefreshFeedBackfillsNameFromTitle(t *testing.T) {
+	const rssWithTitle = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Tech Daily</title><link>https://example.com</link>
+<item><guid>g1</guid><title>Item</title><link>https://example.com/1</link></item>
+</channel></rss>`
+	const rssWithoutTitle = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><link>https://example.com</link>
+<item><guid>g1</guid><title>Item</title><link>https://example.com/1</link></item>
+</channel></rss>`
+
+	tests := []struct {
+		name       string
+		feedName   string
+		serverBody string
+		wantName   string
+	}{
+		{
+			// Feeds added by URL default their name to the link; a successful
+			// pull must replace it with the feed's own channel title.
+			name:       "name equal to link is replaced by title",
+			feedName:   "", // replaced with server.URL below
+			serverBody: rssWithTitle,
+			wantName:   "Tech Daily",
+		},
+		{
+			name:       "custom name is kept",
+			feedName:   "My Custom Name",
+			serverBody: rssWithTitle,
+			wantName:   "My Custom Name",
+		},
+		{
+			name:       "feed without title keeps default name",
+			feedName:   "", // replaced with server.URL below
+			serverBody: rssWithoutTitle,
+			wantName:   "", // replaced with server.URL below
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/rss+xml")
+				_, _ = fmt.Fprint(w, tt.serverBody)
+			}))
+			defer server.Close()
+
+			feedName := tt.feedName
+			if feedName == "" {
+				feedName = server.URL
+			}
+			wantName := tt.wantName
+			if wantName == "" {
+				wantName = server.URL
+			}
+
+			dbPath := filepath.Join(t.TempDir(), "test.db")
+			st, err := store.New(dbPath)
+			if err != nil {
+				t.Fatalf("create store: %v", err)
+			}
+			defer st.Close()
+
+			feed, err := st.CreateFeed(1, feedName, server.URL, "", "", nil)
+			if err != nil {
+				t.Fatalf("create feed: %v", err)
+			}
+
+			p := New(st, &config.Config{
+				PullInterval:      1800,
+				PullTimeout:       5,
+				PullConcurrency:   1,
+				PullMaxBackoff:    604800,
+				AllowPrivateFeeds: true,
+			})
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if err := p.RefreshFeed(ctx, feed.ID); err != nil {
+				t.Fatalf("refresh feed: %v", err)
+			}
+
+			updated, err := st.GetFeed(feed.ID)
+			if err != nil {
+				t.Fatalf("get feed: %v", err)
+			}
+			if updated.Name != wantName {
+				t.Fatalf("feed name = %q, want %q", updated.Name, wantName)
+			}
+		})
 	}
 }

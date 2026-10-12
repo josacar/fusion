@@ -1,7 +1,8 @@
 import { api } from "./client";
 import type {
   APIResponse,
-  ListAPIResponse,
+  ListResponse,
+  PaginatedListResponse,
   LoginRequest,
   Group,
   Feed,
@@ -22,12 +23,17 @@ import type {
   SearchResponse,
   OIDCStatusResponse,
   OIDCLoginResponse,
+  AppInfoResponse,
+  Settings,
+  UpdateSettingsRequest,
 } from "./types";
 
 // Session APIs
 export const sessionAPI = {
   login: (data: LoginRequest) =>
     api.post<APIResponse<{ message: string }>>("/sessions", data),
+
+  status: () => api.get<void>("/sessions"),
 
   logout: () => api.delete<void>("/sessions"),
 };
@@ -41,7 +47,7 @@ export const oidcAPI = {
 
 // Group APIs
 export const groupAPI = {
-  list: () => api.get<ListAPIResponse<Group>>("/groups"),
+  list: () => api.get<ListResponse<Group>>("/groups"),
 
   get: (id: number) => api.get<APIResponse<Group>>(`/groups/${id}`),
 
@@ -56,7 +62,7 @@ export const groupAPI = {
 
 // Feed APIs
 export const feedAPI = {
-  list: () => api.get<ListAPIResponse<Feed>>("/feeds"),
+  list: () => api.get<ListResponse<Feed>>("/feeds"),
 
   get: (id: number) => api.get<APIResponse<Feed>>(`/feeds/${id}`),
 
@@ -90,7 +96,7 @@ export const itemAPI = {
     if (params?.order_by) query.set("order_by", params.order_by);
 
     const queryString = query.toString();
-    return api.get<ListAPIResponse<Item>>(
+    return api.get<PaginatedListResponse<Item>>(
       `/items${queryString ? `?${queryString}` : ""}`,
     );
   },
@@ -112,7 +118,7 @@ export const bookmarkAPI = {
     if (params.group_id) query.set("group_id", params.group_id.toString());
     query.set("limit", (params.limit ?? 50).toString());
     if (params.before) query.set("before", params.before);
-    return api.get<ListAPIResponse<Bookmark>>(`/bookmarks?${query}`);
+    return api.get<PaginatedListResponse<Bookmark>>(`/bookmarks?${query}`);
   },
 
   get: (id: number) => api.get<APIResponse<Bookmark>>(`/bookmarks/${id}`),
@@ -123,12 +129,25 @@ export const bookmarkAPI = {
   delete: (id: number) => api.delete<void>(`/bookmarks/${id}`),
 };
 
+// Settings APIs
+export const settingsAPI = {
+  get: () => api.get<APIResponse<Settings>>("/settings"),
+
+  update: (data: UpdateSettingsRequest) =>
+    api.patch<APIResponse<Settings>>("/settings", data),
+};
+
 // Search APIs
 export const searchAPI = {
   search: (q: string, limit = 10) =>
     api.get<APIResponse<SearchResponse>>(
       `/search?q=${encodeURIComponent(q)}&limit=${limit}`,
     ),
+};
+
+// App APIs
+export const appAPI = {
+  getInfo: () => api.get<APIResponse<AppInfoResponse>>("/app"),
 };
 
 export * from "./types";

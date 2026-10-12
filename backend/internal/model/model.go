@@ -10,15 +10,16 @@ type Group struct {
 
 // Feed represents an RSS/Atom feed.
 type Feed struct {
-	ID        int64  `json:"id"`
-	GroupID   int64  `json:"group_id"`
-	Name      string `json:"name"`
-	Link      string `json:"link"`
-	SiteURL   string `json:"site_url,omitempty"`
-	Suspended bool   `json:"suspended"`
-	Proxy     string `json:"proxy,omitempty"`
-	CreatedAt int64  `json:"created_at"`
-	UpdatedAt int64  `json:"updated_at"`
+	ID                     int64  `json:"id"`
+	GroupID                int64  `json:"group_id"`
+	Name                   string `json:"name"`
+	Link                   string `json:"link"`
+	SiteURL                string `json:"site_url,omitempty"`
+	Suspended              bool   `json:"suspended"`
+	Proxy                  string `json:"proxy,omitempty"`
+	RefreshIntervalSeconds *int64 `json:"refresh_interval_seconds,omitempty"`
+	CreatedAt              int64  `json:"created_at"`
+	UpdatedAt              int64  `json:"updated_at"`
 
 	FetchState FeedFetchState `json:"fetch_state"`
 
@@ -66,6 +67,16 @@ type Item struct {
 	PubDate   int64  `json:"pub_date"`
 	Unread    bool   `json:"unread"`
 	CreatedAt int64  `json:"created_at"`
+}
+
+// Settings holds the user's synced preferences. A nil field means the user
+// has never explicitly chosen a value (clients fall back to their own default).
+type Settings struct {
+	Locale          *string `json:"locale"`
+	ArticlePageSize *int64  `json:"article_page_size"`
+	Theme           *string `json:"theme"`
+	AutoMarkRead    *string `json:"auto_mark_read"`
+	UpdatedAt       int64   `json:"updated_at"`
 }
 
 // Bookmark represents a saved item snapshot.

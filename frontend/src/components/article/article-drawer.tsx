@@ -7,7 +7,6 @@ import {
   Star,
   X,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -25,12 +24,15 @@ import {
 } from "@/queries/bookmarks";
 import { useArticleList } from "@/hooks/use-article-list";
 import { useArticleNavigation } from "@/hooks/use-keyboard";
+import { useAutoMarkRead } from "@/hooks/use-auto-mark-read";
 import { useI18n } from "@/lib/i18n";
 import { cn, formatDate } from "@/lib/utils";
 import { processArticleContent } from "@/lib/content";
 import { getFaviconUrl } from "@/lib/api/favicon";
 import { FeedFavicon } from "@/components/feed/feed-favicon";
 import { toSafeExternalUrl } from "@/lib/safe-url";
+import { useReadStatePins, usePreferencesStore } from "@/store";
+import { autoMarkReadDelayMs } from "@/store/preferences";
 
 export function ArticleDrawer() {
   const { t } = useI18n();
@@ -56,6 +58,12 @@ export function ArticleDrawer() {
   const createBookmark = useCreateBookmark();
   const deleteBookmark = useDeleteBookmark();
 
+  const { pinRead, unpinRead } = useReadStatePins({
+    feedId: selectedFeedId,
+    groupId: selectedGroupId,
+    articleFilter,
+  });
+
   const articleIds = articles.map((a) => a.id);
 
   const storeArticle = selectedArticleId
@@ -74,32 +82,36 @@ export function ArticleDrawer() {
   const article: Item | null =
     (isStarredMode ? fetchedArticle ?? storeArticle : storeArticle ?? fetchedArticle) ??
     null;
-  const canToggleRead = article !== null && article.id > 0;
+  // Read state comes from the in-hand row (list/bookmark cache), not the
+  // detail refetch: in starred mode the fetched detail can disagree with the
+  // row, and the header toggle, the auto-mark timer, and the veto must all
+  // watch the same unread bit or a manual mark-unread gets overwritten.
+  const readArticle = storeArticle ?? fetchedArticle ?? null;
+  const canToggleRead = readArticle !== null && readArticle.id > 0;
   const feed = article ? getFeedById(article.feed_id) : null;
   const bookmark = article ? getBookmarkByItemId(article.id) : null;
   const starred = article ? isItemStarred(article.id) : false;
   const safeArticleLink = article ? toSafeExternalUrl(article.link) : null;
 
-  const markReadMutate = markRead.mutate;
-  const autoReadArticleIdRef = useRef<number | null>(null);
+  const autoMarkRead = usePreferencesStore((s) => s.autoMarkRead);
+  const autoMarkDelayMs = autoMarkReadDelayMs(autoMarkRead);
 
-  // Opening a preview marks the article as read. Tracking the last auto-read id
-  // (instead of reacting to `article.unread`) lets "m" flip it back to unread
-  // without this effect immediately marking it read again.
-  useEffect(() => {
-    if (selectedArticleId === null) {
-      autoReadArticleIdRef.current = null;
-      return;
-    }
-    if (autoReadArticleIdRef.current === selectedArticleId) {
-      return;
-    }
-    if (!article || !canToggleRead || !article.unread) {
-      return;
-    }
-    autoReadArticleIdRef.current = selectedArticleId;
-    markReadMutate([article.id]);
-  }, [article, canToggleRead, markReadMutate, selectedArticleId]);
+  // The target is not gated on the setting: null means the drawer left the
+  // article, which is exactly the event that must clear the veto. "Feature
+  // off" travels as delayMs === null instead.
+  useAutoMarkRead({
+    target:
+      readArticle && readArticle.id > 0
+        ? { id: readArticle.id, unread: readArticle.unread }
+        : null,
+    delayMs: autoMarkDelayMs,
+    // mutate and pinRead must share one synchronous turn (see hook docs).
+    onMarkRead: (id) => {
+      markRead.mutate([id]);
+      pinRead([id]);
+    },
+    hasPendingMutation: () => markRead.isPending || markUnread.isPending,
+  });
 
   const handleOpenChange = (open: boolean) => {
     if (!open) {
@@ -108,12 +120,17 @@ export function ArticleDrawer() {
   };
 
   const handleToggleRead = async () => {
-    if (!article || !canToggleRead) return;
+    if (!readArticle || !canToggleRead) return;
     try {
-      if (article.unread) {
-        await markRead.mutateAsync([article.id]);
+      if (readArticle.unread) {
+        // Pin before the request: the optimistic unread flip drops the row
+        // from the unread list (and with it this drawer's content) until
+        // the pin lands — the await would flash a blank pane.
+        pinRead([readArticle.id]);
+        await markRead.mutateAsync([readArticle.id]);
       } else {
-        await markUnread.mutateAsync([article.id]);
+        await markUnread.mutateAsync([readArticle.id]);
+        unpinRead([readArticle.id]);
       }
     } catch (error) {
       console.error("Failed to toggle read status:", error);
@@ -185,12 +202,12 @@ export function ArticleDrawer() {
                   disabled={!canToggleRead}
                   className="h-auto gap-1.5 px-2.5 py-1.5 text-[13px] font-medium text-muted-foreground"
                 >
-                  {article.unread ? (
+                  {(readArticle?.unread ?? false) ? (
                     <Circle className="h-4 w-4 text-muted-foreground" />
                   ) : (
                     <CircleCheck className="h-4 w-4 text-primary" />
                   )}
-                  {article.unread
+                  {(readArticle?.unread ?? false)
                     ? t("article.action.markRead")
                     : t("article.action.markUnread")}
                 </Button>

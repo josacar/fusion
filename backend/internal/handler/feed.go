@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -11,30 +12,34 @@ import (
 
 	"github.com/0x2E/feedfinder"
 	"github.com/0x2E/fusion/internal/pkg/httpc"
+	"github.com/0x2E/fusion/internal/pull"
 	"github.com/0x2E/fusion/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/mmcdole/gofeed"
 )
 
 type createFeedRequest struct {
-	GroupID int64  `json:"group_id" binding:"required"`
-	Name    string `json:"name" binding:"required"`
-	Link    string `json:"link" binding:"required"`
-	SiteURL string `json:"site_url"`
-	Proxy   string `json:"proxy"`
+	GroupID                int64  `json:"group_id" binding:"required"`
+	Name                   string `json:"name" binding:"required"`
+	Link                   string `json:"link" binding:"required"`
+	SiteURL                string `json:"site_url"`
+	Proxy                  string `json:"proxy"`
+	RefreshIntervalSeconds *int64 `json:"refresh_interval_seconds"`
 }
 
 type updateFeedRequest struct {
-	GroupID   *int64  `json:"group_id"`
-	Name      *string `json:"name"`
-	Link      *string `json:"link"`
-	SiteURL   *string `json:"site_url"`
-	Suspended *bool   `json:"suspended"`
-	Proxy     *string `json:"proxy"` // Empty string clears proxy
+	GroupID                *int64  `json:"group_id"`
+	Name                   *string `json:"name"`
+	Link                   *string `json:"link"`
+	SiteURL                *string `json:"site_url"`
+	Suspended              *bool   `json:"suspended"`
+	Proxy                  *string `json:"proxy"`
+	RefreshIntervalSeconds *int64  `json:"refresh_interval_seconds"`
 }
 
 type validateFeedRequest struct {
-	URL string `json:"url" binding:"required"`
+	URL   string `json:"url" binding:"required"`
+	Proxy string `json:"proxy"`
 }
 
 type discoveredFeed struct {
@@ -46,6 +51,11 @@ type validateFeedResponse struct {
 	Feeds []discoveredFeed `json:"feeds"`
 }
 
+type appInfoResponse struct {
+	PullInterval            int     `json:"pull_interval"`
+	AllowedRefreshIntervals []int64 `json:"allowed_refresh_intervals"`
+}
+
 type batchCreateFeedsRequest struct {
 	Feeds []batchCreateFeedItem `json:"feeds" binding:"required"`
 }
@@ -55,6 +65,44 @@ type batchCreateFeedItem struct {
 	Name    string `json:"name" binding:"required"`
 	Link    string `json:"link" binding:"required"`
 	SiteURL string `json:"site_url"`
+}
+
+// allowedRefreshIntervals is the closed set of per-feed refresh overrides.
+// It is exposed through GET /api/app so the frontend renders the same list
+// the backend validates against.
+var allowedRefreshIntervals = []int64{900, 1800, 3600, 7200, 21600, 43200, 86400}
+
+func isAllowedRefreshInterval(v int64) bool {
+	for _, allowed := range allowedRefreshIntervals {
+		if v == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func invalidRefreshIntervalError() error {
+	return fmt.Errorf("invalid refresh_interval_seconds: must be one of %v", allowedRefreshIntervals)
+}
+
+// normalizeCreateRefreshInterval maps the request semantics to storage: nil or
+// 0 means "use the global interval" and is stored as NULL; any other value
+// must be whitelisted.
+func normalizeCreateRefreshInterval(v *int64) (*int64, error) {
+	if v == nil || *v == 0 {
+		return nil, nil
+	}
+	if !isAllowedRefreshInterval(*v) {
+		return nil, invalidRefreshIntervalError()
+	}
+	return v, nil
+}
+
+func (h *Handler) getAppInfo(c *gin.Context) {
+	dataResponse(c, appInfoResponse{
+		PullInterval:            h.config.PullInterval,
+		AllowedRefreshIntervals: allowedRefreshIntervals,
+	})
 }
 
 const refreshAllTimeout = 30 * time.Minute
@@ -99,14 +147,19 @@ func (h *Handler) createFeed(c *gin.Context) {
 		badRequestError(c, "invalid link")
 		return
 	}
+	refreshInterval, err := normalizeCreateRefreshInterval(req.RefreshIntervalSeconds)
+	if err != nil {
+		badRequestError(c, err.Error())
+		return
+	}
 
-	feed, err := h.store.CreateFeed(req.GroupID, req.Name, req.Link, req.SiteURL, req.Proxy)
+	feed, err := h.store.CreateFeed(req.GroupID, req.Name, req.Link, req.SiteURL, req.Proxy, refreshInterval)
 	if err != nil {
 		internalError(c, err, "create feed")
 		return
 	}
 
-	// Trigger initial pull in background.
+	// Trigger initial pull in background; it wakes the scheduler when done.
 	refreshTimeout := time.Duration(h.config.PullTimeout) * time.Second
 	go func(feedID int64) {
 		ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
@@ -155,6 +208,18 @@ func (h *Handler) updateFeed(c *gin.Context) {
 	if req.Proxy != nil {
 		params.Proxy = req.Proxy
 	}
+	// refresh_interval_seconds on update: absent = keep, 0 = clear back to the
+	// global interval, other values must be whitelisted.
+	if req.RefreshIntervalSeconds != nil {
+		if *req.RefreshIntervalSeconds == 0 {
+			params.ClearRefreshInterval = true
+		} else if !isAllowedRefreshInterval(*req.RefreshIntervalSeconds) {
+			badRequestError(c, invalidRefreshIntervalError().Error())
+			return
+		} else {
+			params.RefreshIntervalSeconds = req.RefreshIntervalSeconds
+		}
+	}
 
 	if err := h.store.UpdateFeed(id, params); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -164,6 +229,7 @@ func (h *Handler) updateFeed(c *gin.Context) {
 		internalError(c, err, "update feed")
 		return
 	}
+	h.puller.Wake()
 
 	feed, err := h.store.GetFeed(id)
 	if err != nil {
@@ -193,6 +259,7 @@ func (h *Handler) deleteFeed(c *gin.Context) {
 		internalError(c, err, "delete feed")
 		return
 	}
+	h.puller.Wake()
 
 	c.Status(http.StatusNoContent)
 }
@@ -205,6 +272,7 @@ func (h *Handler) validateFeed(c *gin.Context) {
 	}
 
 	target := strings.TrimSpace(req.URL)
+	proxy := strings.TrimSpace(req.Proxy)
 	allowPrivateFeeds := h.config != nil && h.config.AllowPrivateFeeds
 	if err := httpc.ValidateRequestURL(c.Request.Context(), target, allowPrivateFeeds); err != nil {
 		badRequestError(c, "invalid url")
@@ -214,7 +282,11 @@ func (h *Handler) validateFeed(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
-	found, err := feedfinder.Find(ctx, target, nil)
+	var finderOptions *feedfinder.Options
+	if proxy != "" {
+		finderOptions = &feedfinder.Options{RequestProxy: &proxy}
+	}
+	found, err := feedfinder.Find(ctx, target, finderOptions)
 	if err != nil {
 		slog.Warn("feed discovery failed", "url", target, "error", err)
 	}
@@ -231,7 +303,7 @@ func (h *Handler) validateFeed(c *gin.Context) {
 	}
 
 	if len(feeds) == 0 {
-		title, parseErr := h.parseFeedTitle(ctx, target)
+		title, parseErr := h.parseFeedTitle(ctx, target, proxy)
 		if parseErr == nil {
 			feeds = append(feeds, discoveredFeed{Title: title, Link: target})
 		}
@@ -254,8 +326,13 @@ func normalizeDiscoveredFeeds(found []feedfinder.Feed) []discoveredFeed {
 		}
 
 		seen[link] = struct{}{}
+		// feedfinder mixes gofeed-parsed feed titles with page <title>/<link>
+		// text the HTML finder already decoded once; Feed carries no source
+		// marker, so page-derived names take one extra decode here. That is
+		// the same bounded residual as item titles and keeps both name sources
+		// on one form.
 		result = append(result, discoveredFeed{
-			Title: strings.TrimSpace(feed.Title),
+			Title: pull.NormalizeTitle(feed.Title),
 			Link:  link,
 		})
 	}
@@ -263,10 +340,10 @@ func normalizeDiscoveredFeeds(found []feedfinder.Feed) []discoveredFeed {
 	return result
 }
 
-func (h *Handler) parseFeedTitle(ctx context.Context, target string) (string, error) {
+func (h *Handler) parseFeedTitle(ctx context.Context, target, proxy string) (string, error) {
 	allowPrivateFeeds := h.config != nil && h.config.AllowPrivateFeeds
 
-	client, err := httpc.NewClient(30*time.Second, "", allowPrivateFeeds)
+	client, err := httpc.NewClient(30*time.Second, proxy, allowPrivateFeeds)
 	if err != nil {
 		return "", err
 	}
@@ -296,7 +373,7 @@ func (h *Handler) parseFeedTitle(ctx context.Context, target string) (string, er
 		return "", nil
 	}
 
-	return strings.TrimSpace(parsedFeed.Title), nil
+	return pull.NormalizeTitle(parsedFeed.Title), nil
 }
 
 func (h *Handler) refreshFeed(c *gin.Context) {

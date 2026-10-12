@@ -24,6 +24,7 @@ type Handler struct {
 	puller       interface {
 		RefreshFeed(ctx context.Context, feedID int64) error
 		RefreshAll(ctx context.Context) (int, error)
+		Wake()
 	}
 	sessions  map[string]int64        // sessionID -> unix expiry seconds
 	mu        sync.RWMutex            // protects sessions state
@@ -38,6 +39,7 @@ type Handler struct {
 func New(store *store.Store, config *config.Config, puller interface {
 	RefreshFeed(ctx context.Context, feedID int64) error
 	RefreshAll(ctx context.Context) (int, error)
+	Wake()
 }) (*Handler, error) {
 	// Hash password at startup for later verification
 	passwordHash, err := auth.HashPassword(config.Password)
@@ -101,6 +103,7 @@ func (h *Handler) SetupRouter() *gin.Engine {
 	api := r.Group("/api")
 	{
 		api.POST("/sessions", h.login)
+		api.GET("/sessions", h.sessionStatus)
 		api.DELETE("/sessions", h.logout)
 
 		// OIDC routes (public, no auth middleware)
@@ -131,6 +134,8 @@ func (h *Handler) SetupRouter() *gin.Engine {
 			auth.POST("/feeds/validate", h.validateFeed)
 			auth.POST("/feeds/:id/refresh", h.refreshFeed)
 
+			auth.GET("/app", h.getAppInfo)
+
 			auth.GET("/items", h.listItems)
 			auth.GET("/items/:id", h.getItem)
 			auth.PATCH("/items/-/read", h.markItemsRead)
@@ -142,6 +147,9 @@ func (h *Handler) SetupRouter() *gin.Engine {
 			auth.POST("/bookmarks", h.createBookmark)
 			auth.GET("/bookmarks/:id", h.getBookmark)
 			auth.DELETE("/bookmarks/:id", h.deleteBookmark)
+
+			auth.GET("/settings", h.getSettings)
+			auth.PATCH("/settings", h.updateSettings)
 		}
 	}
 
